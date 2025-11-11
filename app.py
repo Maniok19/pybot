@@ -655,6 +655,14 @@ def _wait_for_click(prompt):
     print(f"  -> Enregistré : ({pos['x']}, {pos['y']})")
     time.sleep(0.2)
     return pos
+
+def _safe_destroy_overlay(overlay):
+    """Détruit un overlay tkinter de manière sûre."""
+    try:
+        overlay.quit()
+        overlay.destroy()
+    except Exception:
+        pass
     
 def _wait_for_region_drag(prompt_title):
     """Sélection d'une région par glisser-déposer (mouse down -> drag -> release) avec overlay visuel.
@@ -664,8 +672,9 @@ def _wait_for_region_drag(prompt_title):
         raise RuntimeError("Calibration indisponible: 'pynput' manquant")
     print(f"[CALIBRATION] {prompt_title}\n  - Cliquez-gauche, faites glisser pour tracer la zone, relâchez pour valider\n  - Échap pour annuler")
 
-    data = {"start": None, "end": None, "dragging": False}
+    data = {"start": None, "end": None, "dragging": False, "update_needed": False, "hide_overlay": False}
     done = threading.Event()
+    overlay_ref = [None]  # Use list to avoid scope issues
     
     # Création d'un overlay transparent avec tkinter
     if tk is not None:
@@ -675,19 +684,44 @@ def _wait_for_region_drag(prompt_title):
         overlay.overrideredirect(True)
         overlay.configure(bg='cyan')
         overlay.withdraw()
+        overlay_ref[0] = overlay
         
         canvas = tk.Canvas(overlay, bg='cyan', highlightthickness=2, highlightbackground='blue')
         canvas.pack(fill='both', expand=True)
 
     def update_overlay():
-        if tk is None or not data["dragging"] or data["start"] is None or data["end"] is None:
+        if tk is None or overlay_ref[0] is None:
             return
-        x1, y1 = data["start"]
-        x2, y2 = data["end"]
-        x, y = min(x1, x2), min(y1, y2)
-        w, h = abs(x2 - x1), abs(y2 - y1)
-        overlay.geometry(f'{w}x{h}+{x}+{y}')
-        overlay.deiconify()
+        
+        overlay = overlay_ref[0]
+        
+        # Cacher l'overlay si demandé
+        if data["hide_overlay"]:
+            try:
+                overlay.withdraw()
+            except Exception:
+                pass
+            data["hide_overlay"] = False
+        
+        # Vérifier si une mise à jour est nécessaire
+        if data["update_needed"] and data["dragging"] and data["start"] is not None and data["end"] is not None:
+            try:
+                x1, y1 = data["start"]
+                x2, y2 = data["end"]
+                x, y = min(x1, x2), min(y1, y2)
+                w, h = abs(x2 - x1), abs(y2 - y1)
+                overlay.geometry(f'{w}x{h}+{x}+{y}')
+                overlay.deiconify()
+            except Exception:
+                pass
+            data["update_needed"] = False
+        
+        # Continuer la mise à jour si pas terminé
+        if not done.is_set():
+            try:
+                overlay.after(10, update_overlay)
+            except Exception:
+                pass
 
     def on_click(x, y, button, pressed):
         if button != Button.left:
@@ -695,41 +729,50 @@ def _wait_for_region_drag(prompt_title):
         if pressed:
             data["start"] = (int(x), int(y))
             data["dragging"] = True
-            if tk is not None:
-                overlay.after(0, update_overlay)
+            data["update_needed"] = True
         else:
             if data["start"] is not None and not done.is_set():
                 data["end"] = (int(x), int(y))
                 data["dragging"] = False
-                if tk is not None:
-                    overlay.withdraw()
+                data["hide_overlay"] = True
                 done.set()
                 return False
 
     def on_move(x, y):
         if data["dragging"] and data["start"] is not None:
             data["end"] = (int(x), int(y))
-            if tk is not None:
-                overlay.after(0, update_overlay)
+            data["update_needed"] = True
 
     def on_key(key):
         if key == Key.esc and not done.is_set():
             data["dragging"] = False
-            if tk is not None:
-                overlay.withdraw()
+            data["hide_overlay"] = True
             done.set()
             return False
     
     ml = MouseListener(on_click=on_click, on_move=on_move)
     kl = KeyListener(on_press=on_key)
     ml.start(); kl.start()
+    
+    # Démarrer la boucle de mise à jour dans le thread principal
+    if tk is not None and overlay_ref[0] is not None:
+        overlay_ref[0].after(10, update_overlay)
+        
     done.wait()
     try: ml.stop()
     except Exception: pass
     try: kl.stop()
     except Exception: pass
-    if tk is not None:
-        overlay.destroy()
+    
+    # Détruire l'overlay de manière thread-safe en utilisant after
+    if tk is not None and overlay_ref[0] is not None:
+        try:
+            overlay = overlay_ref[0]
+            # Schedule destruction on tkinter's event loop
+            overlay.after(0, lambda: _safe_destroy_overlay(overlay))
+            time.sleep(0.1)  # Give time for destruction to complete
+        except Exception:
+            pass
 
     if not data["start"] or not data["end"]:
         raise RuntimeError("Calibration annulée")
@@ -981,6 +1024,7 @@ def run_bot(stop_event: threading.Event | None = None,
     clicked_validate_for_stage = False  # Nouveau: éviter de cliquer en boucle sur "Validée"
     is_first_hint = True  # OPTIMISATION: Pour savoir si on doit tout taper sur DofusDB
     after_phorreur = False  # OPTIMISATION: Pour savoir si on vient de résoudre un Phorreur
+    same_position_count = 0  # NOUVEAU: Compteur pour détecter les erreurs de détection du "-"
 
     print("--- DÉBUT DE LA CHASSE ---")
     if start_pos is None:
@@ -1104,6 +1148,7 @@ def run_bot(stop_event: threading.Event | None = None,
             print("ERREUR: Impossible de continuer sans coordonnées de destination.")
             break
 
+        same_position_count = 0  # Réinitialiser le compteur à chaque nouvelle destination
         while True:
             if stop_event is not None and stop_event.is_set():
                 print("Arrêt demandé pendant le déplacement.")
@@ -1114,9 +1159,75 @@ def run_bot(stop_event: threading.Event | None = None,
                 break
 
             print(f"Position actuelle: [{current_x}, {current_y}] | Destination: [{dest_x}, {dest_y}]")
+            
+            # Vérifier si on est arrivé à destination
             if current_x == dest_x and current_y == dest_y:
                 print("Arrivé à destination !")
+                same_position_count = 0  # Réinitialiser le compteur
                 break
+            
+            # NOUVEAU: Détecter si la position actuelle est identique mais avec un signe manquant
+            # Par exemple: current=[77, -38] vs dest=[-77, -38]
+            # Si seul le signe diffère sur X ou Y, incrémenter le compteur
+
+            def _to_int_coord(val):
+                """Normalise les tirets unicode et tente de convertir en int."""
+                if val is None:
+                    return None
+                s = str(val).strip()
+                # remplacer les variantes de tiret/minus par '-' ASCII
+                s = s.replace('\u2212', '-').replace('\u2013', '-').replace('\u2014', '-')
+                try:
+                    return int(s)
+                except Exception:
+                    return None
+
+            cur_x_i = _to_int_coord(current_x)
+            cur_y_i = _to_int_coord(current_y)
+            dest_x_i = _to_int_coord(dest_x)
+            dest_y_i = _to_int_coord(dest_y)
+
+            if None not in (cur_x_i, cur_y_i, dest_x_i, dest_y_i):
+                # Comparaisons numériques (plus robustes)
+                x_digits_match = (abs(cur_x_i) == abs(dest_x_i) and cur_x_i != dest_x_i)
+                y_identical = (cur_y_i == dest_y_i)
+                x_identical = (cur_x_i == dest_x_i)
+                y_digits_match = (abs(cur_y_i) == abs(dest_y_i) and cur_y_i != dest_y_i)
+            else:
+                # Fallback: comparaisons sur chaînes (nettoyées)
+                def _clean(s):
+                    return str(s).strip().replace('\u2212', '-').replace('\u2013', '-').replace('\u2014', '-')
+                c_x = _clean(current_x)
+                d_x = _clean(dest_x)
+                c_y = _clean(current_y)
+                d_y = _clean(dest_y)
+                c_x_abs = c_x.lstrip('-')
+                d_x_abs = d_x.lstrip('-')
+                c_y_abs = c_y.lstrip('-')
+                d_y_abs = d_y.lstrip('-')
+                x_digits_match = (c_x_abs == d_x_abs and c_x != d_x)
+                y_identical = (c_y == d_y)
+                x_identical = (c_x == d_x)
+                y_digits_match = (c_y_abs == d_y_abs and c_y != d_y)
+
+            if (x_digits_match and y_identical) or (x_identical and y_digits_match):
+                same_position_count += 1
+                print(f"⚠️ Détection possible d'erreur OCR sur le signe '-' - Tentative {same_position_count}/5")
+                print(f"   Les chiffres correspondent mais pas le signe : actuel=[{current_x}, {current_y}], dest=[{dest_x}, {dest_y}]")
+
+                if same_position_count >= 5:
+                    print("✓ Après 5 tentatives, le bot considère être à la bonne position (erreur récurrente OCR)")
+                    try:
+                        winsound.Beep(1000, 200)  # Signal sonore
+                    except Exception:
+                        pass
+                    same_position_count = 0  # Réinitialiser le compteur
+                    break
+            else:
+                if same_position_count > 0:
+                    print("   Position changée, réinitialisation du compteur.")
+                same_position_count = 0
+
             time.sleep(2)
 
         step = int(CFG["row_step"])

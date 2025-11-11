@@ -1,11 +1,11 @@
 {
   "open_dofus": {
-    "x": 879,
-    "y": 880
+    "x": 885,
+    "y": 871
   },
   "open_chrome": {
-    "x": 381,
-    "y": 882
+    "x": 394,
+    "y": 880
   },
   "open_chasse_tab": {
     "x": 419,
@@ -17,15 +17,15 @@
   },
   "starting_pos_region": {
     "x": 70,
-    "y": 267,
-    "w": 47,
-    "h": 19
+    "y": 270,
+    "w": 60,
+    "h": 14
   },
   "current_pos_region": {
     "x": 0,
-    "y": 86,
-    "w": 70,
-    "h": 31
+    "y": 85,
+    "w": 85,
+    "h": 26
   },
   "input_pos_x": {
     "x": 652,
@@ -80,8 +80,8 @@
     "h": 67
   },
   "hint_click_first": {
-    "x": 226,
-    "y": 308
+    "x": 225,
+    "y": 318
   },
   "row_step": 23,
   "travel_confirm_button": {
