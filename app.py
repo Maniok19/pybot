@@ -402,36 +402,213 @@ except ImportError:
 CFG = {}
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration.json")
 
+class CalibrationManager:
+    """Gestionnaire centralisé pour le chargement, la sauvegarde et la validation des calibrations."""
+    
+    def __init__(self, config_path=None):
+        self.config_path = config_path or CFG_PATH
+        self.backup_path = self.config_path + ".bak"
+        self.config = {}
+        
+    def get_default_config(self):
+        """Retourne la configuration par défaut."""
+        return {
+            "open_dofus": {"x": 1184, "y": 1051}, 
+            "open_chrome": {"x": 1125, "y": 1053},
+            "open_chasse_tab": {"x": 92, "y": 16}, 
+            "dofus_chat_input": {"x": 186, "y": 1009},
+            "starting_pos_region": {"x": 111, "y": 196, "w": 51, "h": 16},
+            "current_pos_region": {"x": 16, "y": 76, "w": 78, "h": 28},
+            "input_pos_x": {"x": 701, "y": 322}, 
+            "input_pos_y": {"x": 1042, "y": 325},
+            "dofus_ui_deadpoint": {"x": 539, "y": 16}, 
+            "chasse_deadpoint": {"x": 220, "y": 1006},
+            "chasse_direction_buttons": {
+                "nord": {"x": 954, "y": 483}, 
+                "est": {"x": 1018, "y": 503}, 
+                "ouest": {"x": 898, "y": 517}, 
+                "sud": {"x": 949, "y": 561}
+            },
+            "chasse_element_input": {"x": 1055, "y": 675}, 
+            "chasse_element_option": {"x": 1055, "y": 716},
+            "hint_hover_first": {"x": 79, "y": 230}, 
+            "hint_region_first": {"x": 27, "y": 153, "w": 360, "h": 60},
+            "hint_click_first": {"x": 301, "y": 230}, 
+            "row_step": 30,
+            "travel_confirm_button": {"x": 880, "y": 580},
+            "validate_click_offset_y": -8
+        }
+    
+    def validate_config(self, cfg):
+        """Valide la structure de la configuration."""
+        required_point_keys = [
+            "open_dofus", "open_chrome", "open_chasse_tab", "dofus_chat_input",
+            "input_pos_x", "input_pos_y", "dofus_ui_deadpoint", "chasse_deadpoint",
+            "chasse_element_input", "chasse_element_option", "hint_hover_first",
+            "hint_click_first", "travel_confirm_button"
+        ]
+        required_region_keys = ["starting_pos_region", "current_pos_region", "hint_region_first"]
+        
+        for key in required_point_keys:
+            if key not in cfg or not isinstance(cfg[key], dict):
+                return False
+            if "x" not in cfg[key] or "y" not in cfg[key]:
+                return False
+        
+        for key in required_region_keys:
+            if key not in cfg or not isinstance(cfg[key], dict):
+                return False
+            if not all(k in cfg[key] for k in ["x", "y", "w", "h"]):
+                return False
+        
+        if "chasse_direction_buttons" not in cfg:
+            return False
+        for dir_key in ["nord", "est", "ouest", "sud"]:
+            if dir_key not in cfg["chasse_direction_buttons"]:
+                return False
+            btn = cfg["chasse_direction_buttons"][dir_key]
+            if "x" not in btn or "y" not in btn:
+                return False
+        
+        if "row_step" not in cfg or not isinstance(cfg["row_step"], (int, float)):
+            return False
+        
+        return True
+    
+    def load(self):
+        """Charge la configuration depuis le fichier JSON."""
+        if not os.path.exists(self.config_path):
+            print(f"Fichier de calibration non trouvé, création de la configuration par défaut.")
+            self.config = self.get_default_config()
+            self.save()
+            return self.config
+        
+        try:
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                loaded_cfg = json.load(f)
+            
+            if not self.validate_config(loaded_cfg):
+                print("Configuration invalide, tentative de restauration depuis la sauvegarde...")
+                if os.path.exists(self.backup_path):
+                    with open(self.backup_path, "r", encoding="utf-8") as f:
+                        loaded_cfg = json.load(f)
+                    if self.validate_config(loaded_cfg):
+                        print("Configuration restaurée depuis la sauvegarde.")
+                        self.config = loaded_cfg
+                        self.save()
+                        return self.config
+                
+                print("Utilisation de la configuration par défaut.")
+                self.config = self.get_default_config()
+                self.save()
+                return self.config
+            
+            self.config = loaded_cfg
+            print(f"Configuration chargée: {len(self.config)} clés principales.")
+            return self.config
+            
+        except json.JSONDecodeError as e:
+            print(f"Erreur JSON dans la calibration: {e}")
+            if os.path.exists(self.backup_path):
+                print("Tentative de restauration depuis la sauvegarde...")
+                try:
+                    with open(self.backup_path, "r", encoding="utf-8") as f:
+                        self.config = json.load(f)
+                    print("Configuration restaurée depuis la sauvegarde.")
+                    return self.config
+                except Exception:
+                    pass
+            
+            print("Utilisation de la configuration par défaut.")
+            self.config = self.get_default_config()
+            self.save()
+            return self.config
+        except Exception as e:
+            print(f"Erreur lors du chargement de la calibration: {e}")
+            self.config = self.get_default_config()
+            self.save()
+            return self.config
+    
+    def save(self):
+        """Sauvegarde la configuration avec backup automatique."""
+        if not self.config:
+            print("Aucune configuration à sauvegarder.")
+            return False
+        
+        if not self.validate_config(self.config):
+            print("Configuration invalide, sauvegarde annulée.")
+            return False
+        
+        try:
+            if os.path.exists(self.config_path):
+                try:
+                    import shutil
+                    shutil.copy2(self.config_path, self.backup_path)
+                except Exception as e:
+                    print(f"Avertissement: impossible de créer la sauvegarde: {e}")
+            
+            temp_path = self.config_path + ".tmp"
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+            
+            if os.path.exists(self.config_path):
+                os.remove(self.config_path)
+            os.rename(temp_path, self.config_path)
+            
+            print(f"Configuration sauvegardée: {self.config_path}")
+            return True
+            
+        except Exception as e:
+            print(f"Erreur lors de la sauvegarde: {e}")
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            return False
+    
+    def export_to(self, path):
+        """Exporte la configuration vers un fichier."""
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+            print(f"Configuration exportée vers: {path}")
+            return True
+        except Exception as e:
+            print(f"Erreur lors de l'export: {e}")
+            return False
+    
+    def import_from(self, path):
+        """Importe une configuration depuis un fichier."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                imported_cfg = json.load(f)
+            
+            if not self.validate_config(imported_cfg):
+                print("Configuration importée invalide.")
+                return False
+            
+            self.config = imported_cfg
+            self.save()
+            print(f"Configuration importée depuis: {path}")
+            return True
+        except Exception as e:
+            print(f"Erreur lors de l'import: {e}")
+            return False
+
+_calib_manager = CalibrationManager()
+
 def load_config():
     """Charge le fichier de configuration JSON."""
     global CFG
-    if os.path.exists(CFG_PATH):
-        with open(CFG_PATH, "r", encoding="utf-8") as f:
-            CFG = json.load(f)
-            print("Fichier de calibration chargé.")
-    else:
-        print("Fichier de calibration non trouvé, création d'une configuration par défaut.")
-        CFG = {
-            "open_dofus": {"x": 1184, "y": 1051}, "open_chrome": {"x": 1125, "y": 1053},
-            "open_chasse_tab": {"x": 92, "y": 16}, "dofus_chat_input": {"x": 186, "y": 1009},
-            "starting_pos_region": {"x": 111, "y": 196, "w": 51, "h": 16},
-            "current_pos_region": {"x": 16, "y": 76, "w": 78, "h": 28},
-            "input_pos_x": {"x": 701, "y": 322}, "input_pos_y": {"x": 1042, "y": 325},
-            "dofus_ui_deadpoint": {"x": 539, "y": 16}, "chasse_deadpoint": {"x": 220, "y": 1006},
-            "chasse_direction_buttons": {"nord": {"x": 954, "y": 483}, "est": {"x": 1018, "y": 503}, "ouest": {"x": 898, "y": 517}, "sud": {"x": 949, "y": 561}},
-            "chasse_element_input": {"x": 1055, "y": 675}, "chasse_element_option": {"x": 1055, "y": 716},
-            "hint_hover_first": {"x": 79, "y": 230}, "hint_region_first": {"x": 27, "y": 153, "w": 360, "h": 60},
-            "hint_click_first": {"x": 301, "y": 230}, "row_step": 30,
-            "travel_confirm_button": {"x": 880, "y": 580},
-            "validate_click_offset_y": -8  # Offset pour remonter le clic 'Valider' (ajustez si besoin)
-        }
-        save_config()
+    CFG = _calib_manager.load()
+    return CFG
 
 def save_config():
     """Sauvegarde la configuration actuelle dans le fichier JSON."""
-    with open(CFG_PATH, "w", encoding="utf-8") as f:
-        json.dump(CFG, f, indent=2, ensure_ascii=False)
-    print(f"Configuration sauvegardée dans : {CFG_PATH}")
+    global CFG
+    _calib_manager.config = CFG
+    return _calib_manager.save()
 
 def _wait_for_click(prompt):
     """Fonction utilitaire pour le mode calibration (point).
@@ -480,33 +657,70 @@ def _wait_for_click(prompt):
     return pos
     
 def _wait_for_region_drag(prompt_title):
-    """Sélection d'une région par glisser-déposer (mouse down -> drag -> release).
+    """Sélection d'une région par glisser-déposer (mouse down -> drag -> release) avec overlay visuel.
     Échap pour annuler."""
     if MouseListener is None or KeyListener is None:
         print("Le mode --calibrate requiert 'pynput'. Lancez : pip install pynput")
         raise RuntimeError("Calibration indisponible: 'pynput' manquant")
     print(f"[CALIBRATION] {prompt_title}\n  - Cliquez-gauche, faites glisser pour tracer la zone, relâchez pour valider\n  - Échap pour annuler")
 
-    data = {"start": None, "end": None}
+    data = {"start": None, "end": None, "dragging": False}
     done = threading.Event()
+    
+    # Création d'un overlay transparent avec tkinter
+    if tk is not None:
+        overlay = tk.Tk()
+        overlay.attributes('-alpha', 0.3)
+        overlay.attributes('-topmost', True)
+        overlay.overrideredirect(True)
+        overlay.configure(bg='cyan')
+        overlay.withdraw()
+        
+        canvas = tk.Canvas(overlay, bg='cyan', highlightthickness=2, highlightbackground='blue')
+        canvas.pack(fill='both', expand=True)
+
+    def update_overlay():
+        if tk is None or not data["dragging"] or data["start"] is None or data["end"] is None:
+            return
+        x1, y1 = data["start"]
+        x2, y2 = data["end"]
+        x, y = min(x1, x2), min(y1, y2)
+        w, h = abs(x2 - x1), abs(y2 - y1)
+        overlay.geometry(f'{w}x{h}+{x}+{y}')
+        overlay.deiconify()
 
     def on_click(x, y, button, pressed):
         if button != Button.left:
             return
         if pressed:
             data["start"] = (int(x), int(y))
+            data["dragging"] = True
+            if tk is not None:
+                overlay.after(0, update_overlay)
         else:
             if data["start"] is not None and not done.is_set():
                 data["end"] = (int(x), int(y))
+                data["dragging"] = False
+                if tk is not None:
+                    overlay.withdraw()
                 done.set()
                 return False
 
+    def on_move(x, y):
+        if data["dragging"] and data["start"] is not None:
+            data["end"] = (int(x), int(y))
+            if tk is not None:
+                overlay.after(0, update_overlay)
+
     def on_key(key):
         if key == Key.esc and not done.is_set():
+            data["dragging"] = False
+            if tk is not None:
+                overlay.withdraw()
             done.set()
             return False
     
-    ml = MouseListener(on_click=on_click)
+    ml = MouseListener(on_click=on_click, on_move=on_move)
     kl = KeyListener(on_press=on_key)
     ml.start(); kl.start()
     done.wait()
@@ -514,6 +728,8 @@ def _wait_for_region_drag(prompt_title):
     except Exception: pass
     try: kl.stop()
     except Exception: pass
+    if tk is not None:
+        overlay.destroy()
 
     if not data["start"] or not data["end"]:
         raise RuntimeError("Calibration annulée")
@@ -614,29 +830,42 @@ def get_hint_screenshot(index: int):
     )
     return screenshot_path
 
-def look_for_hint_on_website(start_pos_x: str, start_pos_y: str, direction: str, element: str, stop_event: threading.Event | None = None):
+def look_for_hint_on_website(start_pos_x: str, start_pos_y: str, direction: str, element: str, stop_event: threading.Event | None = None, is_first_hint: bool = False):
     """
     Automatise la recherche de l'indice suivant sur le site web de chasse.
     Retourne True si une commande /travel valide a été trouvée et envoyée, sinon False.
+    
+    Args:
+        start_pos_x: Coordonnée X de départ
+        start_pos_y: Coordonnée Y de départ
+        direction: Direction à chercher
+        element: Élément/indice à chercher
+        stop_event: Événement d'arrêt
+        is_first_hint: Si True, tape tous les champs (position, direction, indice).
+                       Si False, ne tape que la direction (les indices sont gardés en mémoire par DofusDB).
     """
     open_chrome_treasure_tab()
     if stop_event is not None and stop_event.is_set(): 
         return False
 
-    pyautogui.click(CFG["input_pos_x"]["x"], CFG["input_pos_x"]["y"])
-    pyautogui.hotkey('ctrl', 'a'); pyautogui.press('delete')
-    pyautogui.write(str(start_pos_x))
+    # OPTIMISATION: Ne taper position X/Y et l'indice QUE pour le premier indice
+    # ou en mode récupération (is_first_hint=True)
+    if is_first_hint:
+        pyautogui.click(CFG["input_pos_x"]["x"], CFG["input_pos_x"]["y"])
+        pyautogui.hotkey('ctrl', 'a'); pyautogui.press('delete')
+        pyautogui.write(str(start_pos_x))
 
-    if stop_event is not None and stop_event.is_set(): 
-        return False
-    pyautogui.click(CFG["input_pos_y"]["x"], CFG["input_pos_y"]["y"])
-    pyautogui.hotkey('ctrl', 'a'); pyautogui.press('delete')
-    pyautogui.write(str(start_pos_y))
+        if stop_event is not None and stop_event.is_set(): 
+            return False
+        pyautogui.click(CFG["input_pos_y"]["x"], CFG["input_pos_y"]["y"])
+        pyautogui.hotkey('ctrl', 'a'); pyautogui.press('delete')
+        pyautogui.write(str(start_pos_y))
 
-    pyautogui.click(CFG["chasse_deadpoint"]["x"], CFG["chasse_deadpoint"]["y"])
-    if wait_or_stop(0.25, stop_event): 
-        return False
+        pyautogui.click(CFG["chasse_deadpoint"]["x"], CFG["chasse_deadpoint"]["y"])
+        if wait_or_stop(0.25, stop_event): 
+            return False
 
+    # La direction doit toujours être cliquée
     if direction in CFG["chasse_direction_buttons"]:
         btn = CFG["chasse_direction_buttons"][direction]
         print(f"Direction sélectionnée : {direction.upper()}")
@@ -644,10 +873,15 @@ def look_for_hint_on_website(start_pos_x: str, start_pos_y: str, direction: str,
         if wait_or_stop(1, stop_event): 
             return False
 
+    # L'indice doit TOUJOURS être tapé (car il change à chaque étape)
     pyautogui.click(CFG["chasse_element_input"]["x"], CFG["chasse_element_input"]["y"])
     pyautogui.hotkey('ctrl', 'a'); pyautogui.press('delete')
 
-    print(f"Recherche de l'indice : '{element}'")
+    if is_first_hint:
+        print(f"Recherche de l'indice : '{element}'")
+    else:
+        print(f"Recherche de l'indice (positions gardées en mémoire) : '{element}'")
+    
     pyperclip.copy(str(element).strip())
     pyautogui.hotkey('ctrl', 'v')
     if wait_or_stop(1.5, stop_event): 
@@ -745,6 +979,8 @@ def run_bot(stop_event: threading.Event | None = None,
     open_dofus()
     hint_index = start_hint_index if start_hint_index is not None else 0
     clicked_validate_for_stage = False  # Nouveau: éviter de cliquer en boucle sur "Validée"
+    is_first_hint = True  # OPTIMISATION: Pour savoir si on doit tout taper sur DofusDB
+    after_phorreur = False  # OPTIMISATION: Pour savoir si on vient de résoudre un Phorreur
 
     print("--- DÉBUT DE LA CHASSE ---")
     if start_pos is None:
@@ -758,6 +994,7 @@ def run_bot(stop_event: threading.Event | None = None,
     else:
         pos_x, pos_y = start_pos
         print(f"Mode récupération: départ manuel à [{pos_x}, {pos_y}], indice #{(hint_index + 1)}")
+        is_first_hint = True  # En mode récupération, on doit tout retaper
 
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -786,6 +1023,7 @@ def run_bot(stop_event: threading.Event | None = None,
                 # Prépare la nouvelle étape
                 hint_index = 0
                 clicked_validate_for_stage = True
+                is_first_hint = True  # OPTIMISATION: Nouvelle étape = tout retaper
                 new_x, new_y = get_current_pos_from_screen(stop_event=stop_event)
                 if new_x is not None:
                     pos_x, pos_y = new_x, new_y
@@ -843,10 +1081,15 @@ def run_bot(stop_event: threading.Event | None = None,
             else:
                 print("Impossible de mettre à jour la position (OCR). Position précédente conservée.")
 
+            # OPTIMISATION: Après un Phorreur, il faut tout retaper sur DofusDB
+            is_first_hint = True
             hint_index += 1
             continue
 
-        look_success = look_for_hint_on_website(pos_x, pos_y, direction, element, stop_event=stop_event)
+        look_success = look_for_hint_on_website(pos_x, pos_y, direction, element, stop_event=stop_event, is_first_hint=is_first_hint)
+        # OPTIMISATION: Après le premier indice, on ne retape plus les indices
+        if is_first_hint:
+            is_first_hint = False
         if not look_success:
             print("Aucune progression possible pour cet indice (pas de commande /travel). Interruption.")
             winsound.PlaySound("SystemHand", winsound.SND_ALIAS)
@@ -889,7 +1132,67 @@ def run_bot(stop_event: threading.Event | None = None,
 # ==============================================================================
 
 def main():
-    """Démarre directement l'interface graphique (GUI par défaut)."""
+    """Point d'entrée principal avec gestion des arguments CLI."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Dofus Treasure Hunt Bot")
+    parser.add_argument("--calibrate", action="store_true", help="Lance le mode calibration CLI interactif")
+    parser.add_argument("--gui", action="store_true", help="Lance l'interface graphique (par défaut)")
+    parser.add_argument("--export", type=str, metavar="FILE", help="Exporte la calibration vers un fichier JSON")
+    parser.add_argument("--import", type=str, dest="import_file", metavar="FILE", help="Importe une calibration depuis un fichier JSON")
+    parser.add_argument("--validate", action="store_true", help="Valide la configuration actuelle")
+    parser.add_argument("--reset", action="store_true", help="Réinitialise la configuration aux valeurs par défaut")
+    
+    args = parser.parse_args()
+    
+    if args.export:
+        load_config()
+        if _calib_manager.export_to(args.export):
+            print(f"✓ Configuration exportée avec succès vers: {args.export}")
+        else:
+            print("✗ Erreur lors de l'export")
+            sys.exit(1)
+        return
+    
+    if args.import_file:
+        if _calib_manager.import_from(args.import_file):
+            print(f"✓ Configuration importée avec succès depuis: {args.import_file}")
+        else:
+            print("✗ Erreur lors de l'import ou configuration invalide")
+            sys.exit(1)
+        return
+    
+    if args.validate:
+        cfg = load_config()
+        if _calib_manager.validate_config(cfg):
+            print("✓ Configuration valide")
+            print(f"  - Nombre de clés: {len(cfg)}")
+            print(f"  - Fichier: {CFG_PATH}")
+            if os.path.exists(_calib_manager.backup_path):
+                print(f"  - Sauvegarde disponible: {_calib_manager.backup_path}")
+        else:
+            print("✗ Configuration invalide")
+            sys.exit(1)
+        return
+    
+    if args.reset:
+        print("Réinitialisation de la configuration...")
+        _calib_manager.config = _calib_manager.get_default_config()
+        if _calib_manager.save():
+            print("✓ Configuration réinitialisée aux valeurs par défaut")
+        else:
+            print("✗ Erreur lors de la réinitialisation")
+            sys.exit(1)
+        return
+    
+    if args.calibrate:
+        try:
+            run_calibration()
+        except Exception as e:
+            print(f"Erreur pendant la calibration: {e}")
+            sys.exit(1)
+        return
+    
     load_config()
     launch_gui()
 
@@ -1190,6 +1493,61 @@ def open_calibration_manager(parent):
     btn_reload = ttk.Button(right, text="Recharger", command=do_reload)
     btn_reload.pack(fill="x", pady=(0, 4))
 
+    def do_export():
+        try:
+            from tkinter import filedialog
+            path = filedialog.asksaveasfilename(
+                parent=win,
+                title="Exporter la calibration",
+                defaultextension=".json",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                initialfile="calibration_export.json"
+            )
+            if path:
+                if _calib_manager.export_to(path):
+                    messagebox.showinfo("Export", f"Configuration exportée vers:\n{path}", parent=win)
+                else:
+                    messagebox.showerror("Export", "Erreur lors de l'export", parent=win)
+        except Exception as e:
+            messagebox.showerror("Export", f"Erreur: {e}", parent=win)
+
+    btn_export = ttk.Button(right, text="Exporter...", command=do_export)
+    btn_export.pack(fill="x", pady=(0, 4))
+
+    def do_import():
+        try:
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(
+                parent=win,
+                title="Importer une calibration",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            )
+            if path:
+                if _calib_manager.import_from(path):
+                    messagebox.showinfo("Import", f"Configuration importée depuis:\n{path}", parent=win)
+                    do_reload()
+                else:
+                    messagebox.showerror("Import", "Configuration invalide ou erreur lors de l'import", parent=win)
+        except Exception as e:
+            messagebox.showerror("Import", f"Erreur: {e}", parent=win)
+
+    btn_import = ttk.Button(right, text="Importer...", command=do_import)
+    btn_import.pack(fill="x", pady=(0, 4))
+
+    def do_reset():
+        if messagebox.askyesno("Réinitialisation", 
+                               "Réinitialiser la configuration aux valeurs par défaut?\n\nUne sauvegarde sera créée automatiquement.",
+                               parent=win):
+            global CFG
+            CFG = _calib_manager.get_default_config()
+            _calib_manager.config = CFG
+            _calib_manager.save()
+            do_reload()
+            messagebox.showinfo("Réinitialisation", "Configuration réinitialisée aux valeurs par défaut.", parent=win)
+
+    btn_reset = ttk.Button(right, text="Réinitialiser", command=do_reset)
+    btn_reset.pack(fill="x", pady=(0, 4))
+
     def do_close():
         win.destroy()
 
@@ -1230,6 +1588,7 @@ def launch_gui():
     cont_btn = ttk.Button(btn_frame, text="Continuer (Phorreur)", state="disabled")
 
     start_btn.pack(side="left", padx=(0,6))
+   
     stop_btn.pack(side="left", padx=(0,6))
     calib_btn.pack(side="left", padx=(0,6))
     cont_btn.pack(side="right")

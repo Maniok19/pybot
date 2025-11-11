@@ -1,0 +1,92 @@
+{
+  "open_dofus": {
+    "x": 879,
+    "y": 880
+  },
+  "open_chrome": {
+    "x": 381,
+    "y": 882
+  },
+  "open_chasse_tab": {
+    "x": 419,
+    "y": 444
+  },
+  "dofus_chat_input": {
+    "x": 113,
+    "y": 839
+  },
+  "starting_pos_region": {
+    "x": 70,
+    "y": 267,
+    "w": 47,
+    "h": 19
+  },
+  "current_pos_region": {
+    "x": 0,
+    "y": 86,
+    "w": 70,
+    "h": 31
+  },
+  "input_pos_x": {
+    "x": 652,
+    "y": 291
+  },
+  "input_pos_y": {
+    "x": 929,
+    "y": 292
+  },
+  "dofus_ui_deadpoint": {
+    "x": 1195,
+    "y": 780
+  },
+  "chasse_deadpoint": {
+    "x": 365,
+    "y": 505
+  },
+  "chasse_direction_buttons": {
+    "nord": {
+      "x": 789,
+      "y": 389
+    },
+    "est": {
+      "x": 830,
+      "y": 427
+    },
+    "ouest": {
+      "x": 750,
+      "y": 429
+    },
+    "sud": {
+      "x": 790,
+      "y": 462
+    }
+  },
+  "chasse_element_input": {
+    "x": 650,
+    "y": 551
+  },
+  "chasse_element_option": {
+    "x": 579,
+    "y": 588
+  },
+  "hint_hover_first": {
+    "x": 88,
+    "y": 319
+  },
+  "hint_region_first": {
+    "x": 249,
+    "y": 291,
+    "w": 399,
+    "h": 67
+  },
+  "hint_click_first": {
+    "x": 226,
+    "y": 308
+  },
+  "row_step": 23,
+  "travel_confirm_button": {
+    "x": 729,
+    "y": 490
+  },
+  "validate_click_offset_y": -4
+}
