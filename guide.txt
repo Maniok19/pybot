@@ -1,0 +1,143 @@
+📋 CONTEXTE DU PROJET : BOT DE CHASSE AU TRÉSOR DOFUS
+
+🎯 OBJECTIF PRINCIPAL
+Bot Python automatisé qui résout les chasses au trésor dans le jeu Dofus en utilisant l'OCR (reconnaissance de texte), l'automatisation de clics et la communication avec le site DofusDB pour trouver les indices.
+
+🏗️ ARCHITECTURE GLOBALE
+
+Composants Principaux
+
+1. Moteur OCR (EasyOCR)
+   - Singleton initialisé une seule fois au démarrage
+   - Modèles embarqués : craft_mlt_25k.pth, latin_g2.pth
+   - GPU désactivé en mode packagé (PyInstaller)
+   - Traitement d'image avancé pour améliorer la reconnaissance (agrandissement 4x, seuillage binaire, inversion)
+
+2. Système de Calibration
+   - Fichier JSON : calibration.json (+ backup .bak)
+   - Stocke 20+ coordonnées de points/régions d'écran
+   - Interface GUI dédiée pour recalibrer chaque élément individuellement
+   - Validation automatique de l'intégrité de la configuration
+
+3. Automatisation PyAutoGUI
+   - Contrôle souris/clavier
+   - Captures d'écran ciblées
+   - Basculement entre Dofus et Chrome
+   - Presse-papiers pour les commandes /travel
+
+4. Interface Utilisateur
+   - Mode CLI : --calibrate, --export, --import, --validate, --reset
+   - Mode GUI (Tkinter) : Interface complète avec logs en temps réel, contrôles démarrage/arrêt, gestion Phorreur, mode récupération
+
+🔄 FLUX D'EXÉCUTION DÉTAILLÉ
+
+Étape 1 : Initialisation
+Chargement config → Initialisation OCR → Capture position de départ
+
+Étape 2 : Boucle principale (pour chaque indice)
+1. Survol indice #N dans Dofus → Capture infobulle
+2. OCR de l'infobulle → Extraction élément + direction
+3. Correction fuzzy matching (HINT_LIST de 300+ indices)
+4. Gestion spéciale "Phorreur" → Pause manuelle
+5. Envoi données à DofusDB (X, Y, direction, élément)
+   ⚠️ OPTIMISATION : Seule la direction est retapée      
+      après le 1er indice (sauf Phorreur/récupération)
+6. Récupération commande /travel depuis presse-papiers
+7. Validation stricte (format + coordonnées)
+8. Envoi /travel dans chat Dofus → Clic "Oui"
+9. Boucle attente arrivée (OCR position toutes les 2s)
+   ⚠️ DÉTECTION ERREUR SIGNE "-" : Compteur 5 tentatives
+      Si même position ≥5x → Considéré arrivé
+10. Validation jalon (clic sur coche) → Indice suivant
+
+Étape 3 : Fin d'étape
+Indice vide détecté → Clic "Validée" → Nouvelle étape → Boucle recommence
+
+📐 DONNÉES DE CALIBRATION (20 éléments)
+
+Points de clic (13)
+- open_dofus/open_chrome : Icônes barre des tâches
+- open_chasse_tab : Onglet DofusDB
+- dofus_chat_input : Champ de saisie Dofus
+- input_pos_x/input_pos_y : Champs X/Y sur DofusDB
+- dofus_ui_deadpoint/chasse_deadpoint : Points neutres pour désélection
+- chasse_element_input/chasse_element_option : Recherche d'indice sur site
+- hint_hover_first/hint_click_first : 1ère ligne d'indice Dofus
+- travel_confirm_button : Bouton "Oui" de /travel
+
+Régions de capture (3)
+- starting_pos_region : Position de départ (HUD Dofus)
+- current_pos_region : Position actuelle (HUD Dofus)
+- hint_region_first : Infobulle 1er indice
+
+Directions (4)
+- chasse_direction_buttons.nord/est/ouest/sud : Boutons DofusDB
+
+Paramètres spéciaux (2)
+- row_step : Espacement vertical entre lignes d'indices (pixels)
+- validate_click_offset_y : Offset pour clic "Validée" (-4 par défaut)
+
+🧠 LOGIQUE AVANCÉE
+
+OCR Optimisé
+- Coordonnées : Agrandissement 4x, LANCZOS4, seuillage OTSU, inversion couleur
+- Corrections : O→0, S→5, l→1, Z→2, B→8, q/g→9
+- Gestion tirets : Normalisation Unicode (—, –, − → -)
+
+Extraction indices
+- Méthode 1 : Regex [\[(]\s*([^\]\)]+?)\s*[\]\)] (tolère erreurs OCR)
+- Méthode 2 : Split sur "jusqu'à/jusqu'"
+- Méthode 3 : Suppression pattern "dirigez-vous..."
+- Correction finale : Fuzzy matching (fuzzywuzzy) contre HINT_LIST (score ≥45)
+
+Optimisations Performances
+- ✅ 1er indice/Phorreur/Récupération : Tape X, Y, direction, élément
+- ✅ Indices suivants : Tape UNIQUEMENT direction + élément (DofusDB garde X/Y en mémoire)
+- ✅ Détection erreur "-" : Si position identique ≥5x (signes différents) → Validé
+
+Gestion Phorreur
+Détection "Phorreur" dans indice
+→ Signal sonore + pause
+→ GUI : Active bouton "Continuer" | CLI : Attend Entrée
+→ Validation jalon + actualisation position actuelle
+→ Flag is_first_hint=True (retape tout sur DofusDB)
+
+Mode Récupération
+Permet de reprendre une chasse interrompue
+→ Input : X, Y dernière position, numéro d'indice à traiter
+→ Flag is_first_hint=True pour resynchroniser DofusDB
+
+🎨 INTERFACE GUI (Tkinter)
+
+Fonctionnalités
+- Logs en temps réel : Queue thread-safe, redirection stdout
+- États visuels : Blanc (idle) → Vert (running) → Rouge (stopped)
+- Contrôles : Lancer/Arrêter, Continuer (Phorreur), Calibration
+- Options : Toujours au-dessus, mode récupération
+- Gestionnaire Calibration : TreeView éditable, export/import/reset
+
+Sécurité
+- Stop thread-safe avec threading.Event
+- Validation stricte commandes /travel
+- Timeout 15s chargement carte
+- Gestion erreurs OCR avec fallbacks
+
+🛠️ DÉPENDANCES CRITIQUES
+- easyocr         # OCR
+- opencv-python   # Traitement image
+- pyautogui       # Automatisation
+- pyperclip       # Presse-papiers
+- fuzzywuzzy      # Matching flou
+- python-Levenshtein  # Accélération fuzzy
+- numpy           # Traitement matriciel
+- pynput          # Calibration (souris/clavier)
+- tkinter         # GUI (inclus Python)
+
+📌 POINTS D'ATTENTION POUR L'IA
+
+1. Précision calibration : Erreur 1 pixel = échec total
+2. Résolution Dofus : Paramètres recommandés dans show_startup_message()
+3. Robustesse OCR : Traitement image CRUCIAL pour "−" (minus Unicode)
+4. Thread-safety : Toutes actions pyautogui doivent vérifier stop_event
+5. État DofusDB : Le site garde X/Y en mémoire entre recherches
+6. Validation stricte : JAMAIS envoyer commande /travel invalide

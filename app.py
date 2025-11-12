@@ -199,14 +199,21 @@ def ocr_text_from_image(image_or_path):
     Returns:
         str: Le texte extrait, sinon une chaîne vide en cas d'erreur.
     """
+    print(f"[OCR-CORE] 🔍 Début OCR (type: {type(image_or_path).__name__})")
     reader = get_ocr_instance()
     try:
         # detail=0 simplifie la sortie en une liste de chaînes de caractères.
         # paragraph=True aide à regrouper le texte de manière logique.
+        import time as time_module
+        start = time_module.time()
         result = reader.readtext(image_or_path, detail=0, paragraph=True)
-        return " ".join(result).strip()
+        elapsed = time_module.time() - start
+        combined = " ".join(result).strip()
+        print(f"[OCR-CORE] ✅ OCR terminé en {elapsed:.2f}s - {len(result)} segments détectés")
+        print(f"[OCR-CORE] 📝 Résultat brut: '{combined}'")
+        return combined
     except Exception as e:
-        print(f"ERREUR OCR: {e}")
+        print(f"[OCR-CORE] ❌ ERREUR OCR: {e}")
         return ""
 
 # ==============================================================================
@@ -219,22 +226,28 @@ def extract_coordinates_from_image(image_path: str):
     traitement d'image amélioré pour une meilleure reconnaissance des caractères,
     notamment le signe moins (-).
     """
+    print(f"[OCR-DEBUG] 📸 Début extraction de '{image_path}'")
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise ValueError(f"Échec du chargement de l'image : '{image_path}'")
 
+    print(f"[OCR-DEBUG] ✓ Image chargée (taille originale: {img.shape[1]}x{img.shape[0]})")
+    
     # --- AJOUTS ET MODIFICATIONS ---
 
     # 1. Agrandir l'image (facteur 4x pour encore plus de détails).
     #    INTER_LANCZOS4 est souvent considéré comme supérieur à CUBIC pour la netteté.
     img_processed = cv2.resize(img, None, fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+    print(f"[OCR-DEBUG] ✓ Image agrandie 4x (nouvelle taille: {img_processed.shape[1]}x{img_processed.shape[0]})")
 
     # 2. Appliquer le seuillage binaire pour obtenir une image N&B pure.
     _, img_processed = cv2.threshold(img_processed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    print(f"[OCR-DEBUG] ✓ Seuillage OTSU appliqué")
     
     # 3. INVERSER L'IMAGE (CRUCIAL).
     #    Le texte de Dofus est blanc. L'OCR performe mieux avec du texte noir sur fond blanc.
     img_processed = cv2.bitwise_not(img_processed)
+    print(f"[OCR-DEBUG] ✓ Image inversée (texte noir sur fond blanc)")
 
     # (Optionnel, pour le débogage) Sauvegarder l'image traitée pour voir ce que l'OCR voit.
     # cv2.imwrite('processed_coords.png', img_processed)
@@ -243,27 +256,36 @@ def extract_coordinates_from_image(image_path: str):
 
     raw_text = ocr_text_from_image(img_processed)
     
-    print(f"Texte brut extrait par l'OCR (après traitement avancé) : '{raw_text}'")
+    print(f"[OCR-DEBUG] 📝 Texte brut OCR: '{raw_text}'")
 
     # ... le reste de votre code est parfait et reste inchangé ...
     if not raw_text:
+        print(f"[OCR-DEBUG] ❌ ÉCHEC: Aucun texte extrait")
         raise ValueError(f"Échec de l'OCR: Aucun texte n'a été extrait de '{image_path}'")
 
     corrections = {'O': '0', 'o': '0', 'S': '5', 's': '5', 'l': '1', 'Z': '2', 'B': '8', 'q': '9', 'g': '9'}
     corrected_text = raw_text
     for char, replacement in corrections.items():
         corrected_text = corrected_text.replace(char, replacement)
+    
+    print(f"[OCR-DEBUG] 🔧 Après corrections lettres→chiffres: '{corrected_text}'")
 
     corrected_text = re.sub(r'[—–−_]', '-', corrected_text)
+    print(f"[OCR-DEBUG] 🔧 Après normalisation tirets: '{corrected_text}'")
+    
     separators_replaced = re.sub(r'[^\d-]', ' ', corrected_text)
     separators_replaced = re.sub(r'-\s+', '-', separators_replaced)
+    print(f"[OCR-DEBUG] 🔧 Après remplacement séparateurs: '{separators_replaced}'")
+    
     numbers = re.findall(r'-?\d+', separators_replaced)
+    print(f"[OCR-DEBUG] 🔢 Nombres extraits: {numbers}")
 
     if len(numbers) >= 2:
         pos_x, pos_y = numbers[0], numbers[1]
-        print(f"Coordonnées trouvées : X={pos_x}, Y={pos_y}")
+        print(f"[OCR-DEBUG] ✅ Coordonnées TROUVÉES: X={pos_x}, Y={pos_y}")
         return pos_x, pos_y
 
+    print(f"[OCR-DEBUG] ❌ ÉCHEC: Moins de 2 nombres trouvés")
     raise ValueError(f"Échec de l'extraction des coordonnées depuis le texte OCR : '{raw_text}' (traité en : '{separators_replaced}')")
 
 
@@ -980,33 +1002,49 @@ def get_current_pos_from_screen(timeout: int = 15, black_threshold: int = 20, st
     """
     Attend que la carte se charge et capture la position actuelle du joueur.
     """
+    print(f"[POS-DEBUG] 🎯 Début capture position (timeout={timeout}s, seuil noir={black_threshold})")
     r = CFG["current_pos_region"]
+    print(f"[POS-DEBUG] 📍 Région configurée: x={r['x']}, y={r['y']}, w={r['w']}, h={r['h']}")
     start_time = time.time()
     screenshot_path = 'current_pos.png'
-
-    print("Attente du chargement de la carte...")
+    
+    attempt = 0
+    print("[POS-DEBUG] ⏳ Attente du chargement de la carte...")
     while time.time() - start_time < timeout:
         if stop_event is not None and stop_event.is_set():
-            print("Arrêt demandé pendant la lecture de la position actuelle.")
+            print("[POS-DEBUG] ⛔ Arrêt demandé pendant la lecture de la position actuelle.")
             return None, None
+        
+        attempt += 1
         img = pyautogui.screenshot(region=(r["x"], r["y"], r["w"], r["h"]))
         mean_brightness = np.mean(np.array(img))
 
+        if attempt % 10 == 0:  # Log toutes les 10 tentatives
+            elapsed = time.time() - start_time
+            print(f"[POS-DEBUG] 🔍 Tentative #{attempt} (t={elapsed:.1f}s) - Luminosité: {mean_brightness:.2f}")
+
         if mean_brightness > black_threshold:
-            print(f"Carte chargée (luminosité: {mean_brightness:.2f}). Analyse de la position...")
+            print(f"[POS-DEBUG] ✅ Carte chargée ! (luminosité: {mean_brightness:.2f} > {black_threshold})")
             img.save(screenshot_path)
+            print(f"[POS-DEBUG] 💾 Screenshot sauvegardé: '{screenshot_path}'")
             try:
-                return extract_coordinates_from_image(screenshot_path)
+                coords = extract_coordinates_from_image(screenshot_path)
+                print(f"[POS-DEBUG] ✅ Position extraite avec succès: {coords}")
+                return coords
             except ValueError as e:
-                print(e)
+                print(f"[POS-DEBUG] ❌ Erreur extraction: {e}")
         time.sleep(0.2)
 
-    print(f"TIMEOUT: La carte ne semble pas s'être chargée après {timeout}s. Tentative d'analyse quand même.")
+    elapsed = time.time() - start_time
+    print(f"[POS-DEBUG] ⚠️ TIMEOUT atteint ({elapsed:.1f}s/{timeout}s). Tentative d'analyse forcée...")
     pyautogui.screenshot(screenshot_path, region=(r["x"], r["y"], r["w"], r["h"]))
+    print(f"[POS-DEBUG] 💾 Screenshot final sauvegardé: '{screenshot_path}'")
     try:
-        return extract_coordinates_from_image(screenshot_path)
+        coords = extract_coordinates_from_image(screenshot_path)
+        print(f"[POS-DEBUG] ✅ Position extraite (après timeout): {coords}")
+        return coords
     except ValueError as e:
-        print(f"Échec critique de la lecture de la position actuelle : {e}")
+        print(f"[POS-DEBUG] ❌ Échec critique de la lecture de la position actuelle: {e}")
         return None, None
 
 # ==============================================================================
@@ -1028,16 +1066,20 @@ def run_bot(stop_event: threading.Event | None = None,
 
     print("--- DÉBUT DE LA CHASSE ---")
     if start_pos is None:
+        print("[INIT-DEBUG] 🏁 Capture de la position de départ...")
         start_pos_region = CFG["starting_pos_region"]
+        print(f"[INIT-DEBUG] 📍 Région de départ: x={start_pos_region['x']}, y={start_pos_region['y']}, w={start_pos_region['w']}, h={start_pos_region['h']}")
         pyautogui.screenshot('starting_pos.png', region=(start_pos_region["x"], start_pos_region["y"], start_pos_region["w"], start_pos_region["h"]))
+        print(f"[INIT-DEBUG] 💾 Screenshot sauvegardé: 'starting_pos.png'")
         try:
             pos_x, pos_y = extract_coordinates_from_image('starting_pos.png')
+            print(f"[INIT-DEBUG] ✅ Position de départ extraite: [{pos_x}, {pos_y}]")
         except ValueError as e:
-            print(f"ERREUR CRITIQUE: Impossible de lire la position de départ. {e}")
+            print(f"[INIT-DEBUG] ❌ ERREUR CRITIQUE: Impossible de lire la position de départ. {e}")
             return
     else:
         pos_x, pos_y = start_pos
-        print(f"Mode récupération: départ manuel à [{pos_x}, {pos_y}], indice #{(hint_index + 1)}")
+        print(f"[INIT-DEBUG] 🔄 Mode récupération: départ manuel à [{pos_x}, {pos_y}], indice #{(hint_index + 1)}")
         is_first_hint = True  # En mode récupération, on doit tout retaper
 
     while True:
@@ -1068,13 +1110,14 @@ def run_bot(stop_event: threading.Event | None = None,
                 hint_index = 0
                 clicked_validate_for_stage = True
                 is_first_hint = True  # OPTIMISATION: Nouvelle étape = tout retaper
+                print("[ETAPE-DEBUG] 📡 Lecture position pour nouvelle étape...")
                 new_x, new_y = get_current_pos_from_screen(stop_event=stop_event)
                 if new_x is not None:
                     pos_x, pos_y = new_x, new_y
-                    print(f"Nouvelle étape: position de départ mise à jour [{pos_x}, {pos_y}]")
+                    print(f"[ETAPE-DEBUG] ✅ Nouvelle étape: position de départ mise à jour [{pos_x}, {pos_y}]")
                     continue
                 else:
-                    print("Impossible de lire la position actuelle pour la nouvelle étape.")
+                    print("[ETAPE-DEBUG] ❌ Impossible de lire la position actuelle pour la nouvelle étape.")
                     try:
                         winsound.PlaySound("SystemHand", winsound.SND_ALIAS)
                     except Exception:
@@ -1117,13 +1160,13 @@ def run_bot(stop_event: threading.Event | None = None,
             if wait_or_stop(0.5, stop_event): return
 
             # NOUVEAU: actualiser la position après la résolution du Phorreur
-            print("Lecture de la position actuelle après résolution du Phorreur...")
+            print("[PHORREUR-DEBUG] 📡 Lecture de la position actuelle après résolution du Phorreur...")
             new_x, new_y = get_current_pos_from_screen(stop_event=stop_event)
             if new_x is not None:
                 pos_x, pos_y = new_x, new_y
-                print(f"Position mise à jour après Phorreur: [{pos_x}, {pos_y}]")
+                print(f"[PHORREUR-DEBUG] ✅ Position mise à jour après Phorreur: [{pos_x}, {pos_y}]")
             else:
-                print("Impossible de mettre à jour la position (OCR). Position précédente conservée.")
+                print("[PHORREUR-DEBUG] ❌ Impossible de mettre à jour la position (OCR). Position précédente conservée.")
 
             # OPTIMISATION: Après un Phorreur, il faut tout retaper sur DofusDB
             is_first_hint = True
@@ -1149,20 +1192,24 @@ def run_bot(stop_event: threading.Event | None = None,
             break
 
         same_position_count = 0  # Réinitialiser le compteur à chaque nouvelle destination
+        print(f"[MOVE-DEBUG] 🎯 Début déplacement vers [{dest_x}, {dest_y}]")
+        
         while True:
             if stop_event is not None and stop_event.is_set():
-                print("Arrêt demandé pendant le déplacement.")
+                print("[MOVE-DEBUG] ⛔ Arrêt demandé pendant le déplacement.")
                 return
+            
+            print(f"[MOVE-DEBUG] 📡 Capture position actuelle...")
             current_x, current_y = get_current_pos_from_screen(stop_event=stop_event)
             if current_x is None:
-                print("Abandon de la vérification de la position.")
+                print("[MOVE-DEBUG] ❌ Abandon de la vérification de la position.")
                 break
 
-            print(f"Position actuelle: [{current_x}, {current_y}] | Destination: [{dest_x}, {dest_y}]")
+            print(f"[MOVE-DEBUG] 📍 Position actuelle: [{current_x}, {current_y}] | Destination: [{dest_x}, {dest_y}]")
             
             # Vérifier si on est arrivé à destination
             if current_x == dest_x and current_y == dest_y:
-                print("Arrivé à destination !")
+                print("[MOVE-DEBUG] ✅ Arrivé à destination !")
                 same_position_count = 0  # Réinitialiser le compteur
                 break
             
@@ -1186,6 +1233,8 @@ def run_bot(stop_event: threading.Event | None = None,
             cur_y_i = _to_int_coord(current_y)
             dest_x_i = _to_int_coord(dest_x)
             dest_y_i = _to_int_coord(dest_y)
+            
+            print(f"[MOVE-DEBUG] 🔢 Conversion numérique: cur=({cur_x_i}, {cur_y_i}), dest=({dest_x_i}, {dest_y_i})")
 
             if None not in (cur_x_i, cur_y_i, dest_x_i, dest_y_i):
                 # Comparaisons numériques (plus robustes)
@@ -1193,7 +1242,9 @@ def run_bot(stop_event: threading.Event | None = None,
                 y_identical = (cur_y_i == dest_y_i)
                 x_identical = (cur_x_i == dest_x_i)
                 y_digits_match = (abs(cur_y_i) == abs(dest_y_i) and cur_y_i != dest_y_i)
+                print(f"[MOVE-DEBUG] 🔍 Comparaison: x_match={x_digits_match}, y_id={y_identical}, x_id={x_identical}, y_match={y_digits_match}")
             else:
+                print(f"[MOVE-DEBUG] ⚠️ Impossible de convertir en int, utilisation fallback sur chaînes")
                 # Fallback: comparaisons sur chaînes (nettoyées)
                 def _clean(s):
                     return str(s).strip().replace('\u2212', '-').replace('\u2013', '-').replace('\u2014', '-')
@@ -1209,14 +1260,17 @@ def run_bot(stop_event: threading.Event | None = None,
                 y_identical = (c_y == d_y)
                 x_identical = (c_x == d_x)
                 y_digits_match = (c_y_abs == d_y_abs and c_y != d_y)
+                print(f"[MOVE-DEBUG] 🔍 Comparaison (fallback): x_match={x_digits_match}, y_id={y_identical}, x_id={x_identical}, y_match={y_digits_match}")
 
             if (x_digits_match and y_identical) or (x_identical and y_digits_match):
                 same_position_count += 1
-                print(f"⚠️ Détection possible d'erreur OCR sur le signe '-' - Tentative {same_position_count}/5")
-                print(f"   Les chiffres correspondent mais pas le signe : actuel=[{current_x}, {current_y}], dest=[{dest_x}, {dest_y}]")
+                print(f"[MOVE-DEBUG] ⚠️ DÉTECTION ERREUR SIGNE '-' - Tentative {same_position_count}/5")
+                print(f"[MOVE-DEBUG]    Les chiffres correspondent mais pas le signe")
+                print(f"[MOVE-DEBUG]    Actuel  : [{current_x}, {current_y}]")
+                print(f"[MOVE-DEBUG]    Dest    : [{dest_x}, {dest_y}]")
 
                 if same_position_count >= 5:
-                    print("✓ Après 5 tentatives, le bot considère être à la bonne position (erreur récurrente OCR)")
+                    print("[MOVE-DEBUG] ✅ OVERRIDE: 5 tentatives = considéré arrivé (erreur OCR récurrente)")
                     try:
                         winsound.Beep(1000, 200)  # Signal sonore
                     except Exception:
@@ -1225,9 +1279,10 @@ def run_bot(stop_event: threading.Event | None = None,
                     break
             else:
                 if same_position_count > 0:
-                    print("   Position changée, réinitialisation du compteur.")
+                    print(f"[MOVE-DEBUG] 🔄 Position changée, compteur réinitialisé (était à {same_position_count})")
                 same_position_count = 0
 
+            print(f"[MOVE-DEBUG] ⏳ Attente 2s avant nouvelle vérification...")
             time.sleep(2)
 
         step = int(CFG["row_step"])
